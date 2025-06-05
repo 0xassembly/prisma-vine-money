@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.19;
+pragma solidity ^0.8.19;
 
 interface IFactory {
     // commented values are suggested default parameters
@@ -27,7 +27,7 @@ interface IFactory {
 
     function setImplementations(address _troveManagerImpl, address _sortedTrovesImpl) external;
 
-    function PRISMA_CORE() external view returns (address);
+    function VINE_CORE() external view returns (address);
 
     function borrowerOperations() external view returns (address);
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.19;
+pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
@@ -14,13 +14,13 @@ interface IClaimCallback {
 }
 
 /**
-    @title Prisma Airdrop Distributor
-    @notice Distributes PRISMA to veCRV holders that voted in favor of Prisma's
+    @title Vine Airdrop Distributor
+    @notice Distributes VINE to veCRV holders that voted in favor of Vine's
             initial Curve governance proposal, and to early users who interacted
             with the protocol prior to token emissions.
-    @dev Airdropped PRISMA tokens are given as a locked position. Distribution
+    @dev Airdropped VINE tokens are given as a locked position. Distribution
          is via a merkle proof. The proof and script used to create are available
-         on Github: https://github.com/prisma-fi/airdrop-proofs
+         on Github: https://github.com/vine-fi/airdrop-proofs
  */
 contract AirdropDistributor is Ownable {
     using Address for address;
@@ -42,7 +42,7 @@ contract AirdropDistributor is Ownable {
     event Claimed(address indexed claimant, address indexed receiver, uint256 index, uint256 amount);
     event MerkleRootSet(bytes32 root, uint256 canClaimUntil);
 
-    constructor(IERC20 _token, ITokenLocker _locker, address _vault, uint256 lockWeeks) {
+    constructor(IERC20 _token, ITokenLocker _locker, address _vault, uint256 lockWeeks) Ownable(msg.sender) {
         token = _token;
         locker = _locker;
         vault = _vault;
@@ -65,7 +65,7 @@ contract AirdropDistributor is Ownable {
         require(amount > 0, "Nothing to sweep");
         token.transferFrom(vault, address(this), amount);
         token.approve(vault, amount);
-        IPrismaVault(vault).increaseUnallocatedSupply(amount);
+        IVineVault(vault).increaseUnallocatedSupply(amount);
     }
 
     function isClaimed(uint256 index) public view returns (bool) {
@@ -94,7 +94,6 @@ contract AirdropDistributor is Ownable {
     ) external {
         if (msg.sender != claimant) {
             require(msg.sender == owner(), "onlyOwner");
-            require(claimant.isContract(), "Claimant must be a contract");
         }
 
         require(merkleRoot != bytes32(0), "merkleRoot not set");

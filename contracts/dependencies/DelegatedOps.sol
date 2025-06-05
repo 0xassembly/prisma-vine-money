@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.19;
+pragma solidity ^0.8.19;
 
 /**
-    @title Prisma Delegated Operations
+    @title Vine Delegated Operations
     @notice Allows delegation to specific contract functionality. Useful for creating
             wrapper contracts to bundle multiple interactions into a single call.
 

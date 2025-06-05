@@ -1,20 +1,21 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.19;
+pragma solidity ^0.8.19;
 
 import "../interfaces/IERC2612.sol";
-import { OFT, IERC20, ERC20 } from "@layerzerolabs/solidity-examples/contracts/token/oft/OFT.sol";
+import { IERC20, ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "../dependencies/VineOwnable.sol";
 
 /**
-    @title Prisma Governance Token
+    @title Vine Governance Token
     @notice Given as an incentive for users of the protocol. Can be locked in `TokenLocker`
-            to receive lock weight, which gives governance power within the Prisma DAO.
+            to receive lock weight, which gives governance power within the Vine DAO.
  */
-contract PrismaToken is OFT, IERC2612 {
+contract VineToken is ERC20, IERC2612, VineOwnable {
     // --- ERC20 Data ---
 
-    string internal constant _NAME = "Prisma Governance Token";
-    string internal constant _SYMBOL = "PRISMA";
+    string internal constant _NAME = "Vine Governance Token";
+    string internal constant _SYMBOL = "VINE";
     string public constant version = "1";
 
     // --- EIP 2612 Data ---
@@ -32,16 +33,22 @@ contract PrismaToken is OFT, IERC2612 {
     bytes32 private immutable _HASHED_NAME;
     bytes32 private immutable _HASHED_VERSION;
 
-    address public immutable locker;
-    address public immutable vault;
+    address public locker;
+    address public vault;
+    address public celerEndPoint;
 
     uint256 public maxTotalSupply;
-
+    uint256 tradeTime;
+    mapping(address => bool) public buyFrom;
+    mapping(address => bool) public swapTo;
     mapping(address => uint256) private _nonces;
+
+    event ReceiveFromChain(uint16 indexed _srcChainId, address indexed _to, uint256 _amount);
+    event SendToChain(uint16 indexed _dstChainId, address indexed _from, bytes _toAddress, uint256 _amount);
 
     // --- Functions ---
 
-    constructor(address _vault, address _layerZeroEndpoint, address _locker) OFT(_NAME, _SYMBOL, _layerZeroEndpoint) {
+    constructor(address _vineCore) ERC20(_NAME, _SYMBOL) VineOwnable(_vineCore) {
         bytes32 hashedName = keccak256(bytes(_NAME));
         bytes32 hashedVersion = keccak256(bytes(version));
 
@@ -49,9 +56,28 @@ contract PrismaToken is OFT, IERC2612 {
         _HASHED_VERSION = hashedVersion;
         _CACHED_CHAIN_ID = block.chainid;
         _CACHED_DOMAIN_SEPARATOR = _buildDomainSeparator(_TYPE_HASH, hashedName, hashedVersion);
+    }
 
-        locker = _locker;
+    function setInitialParameters(address _vault, address _locker) external {
+        require(vault == address(0) && _vault != address(0));
         vault = _vault;
+        locker = _locker;
+    }
+
+    function setTradeFrom(address _pairs, bool _bol) external onlyOwner() {
+        buyFrom[_pairs] = _bol;
+    }
+
+    function setSwapTo(address _pairs, bool _bol) external onlyOwner() {
+        swapTo[_pairs] = _bol;
+    }
+
+    function setTradeTime(uint256 _time) external onlyOwner() {
+        tradeTime = _time;
+    }
+
+    function setCelerEndPoint(address _celer) external onlyOwner {
+        celerEndPoint = _celer;
     }
 
     function mintToVault(uint256 _totalSupply) external returns (bool) {
@@ -62,6 +88,18 @@ contract PrismaToken is OFT, IERC2612 {
         maxTotalSupply = _totalSupply;
 
         return true;
+    }
+
+    function receiveFromChain(uint16 srcChainId, address account, uint256 amount) external {
+        require(msg.sender == celerEndPoint, "Vine: Caller not CE");
+        _mint(account, amount);
+        emit ReceiveFromChain(srcChainId, account, amount);
+    }
+
+    function burn(uint16 dstChainId, address from, bytes memory to, uint256 amount) external {
+        require(msg.sender == celerEndPoint, "Vine: Caller not CE");
+        _burn(from, amount);
+        emit SendToChain(dstChainId, from, to, amount);
     }
 
     // --- EIP 2612 functionality ---
@@ -83,7 +121,7 @@ contract PrismaToken is OFT, IERC2612 {
         bytes32 r,
         bytes32 s
     ) external override {
-        require(deadline >= block.timestamp, "PRISMA: expired deadline");
+        require(deadline >= block.timestamp, "VINE: expired deadline");
         bytes32 digest = keccak256(
             abi.encodePacked(
                 "\x19\x01",
@@ -92,7 +130,7 @@ contract PrismaToken is OFT, IERC2612 {
             )
         );
         address recoveredAddress = ecrecover(digest, v, r, s);
-        require(recoveredAddress == owner, "PRISMA: invalid signature");
+        require(recoveredAddress == owner, "VINE: invalid signature");
         _approve(owner, spender, amount);
     }
 
@@ -113,7 +151,42 @@ contract PrismaToken is OFT, IERC2612 {
         return keccak256(abi.encode(typeHash, name_, version_, block.chainid, address(this)));
     }
 
-    function _beforeTokenTransfer(address, address to, uint256) internal virtual override {
-        require(to != address(this), "ERC20: transfer to the token address");
+    function _update(
+        address from,
+        address to,
+        uint256 amount
+    ) internal override {
+        if (block.timestamp >= tradeTime + 1 hours) {
+            super._update(from, to, amount);
+            return;
+        }
+
+        if (amount == 0) {
+            return;
+        }
+
+        if (block.timestamp < tradeTime) {
+            require(
+                from == owner() || to == owner() || (!buyFrom[from] && !swapTo[to]),
+                "Trading is not active."
+            );
+            super._update(from, to, amount);
+            return;
+        }
+
+        super._update(from, to, amount);
+        if(buyFrom[from]) {
+            uint256 fees = block.timestamp - tradeTime > 420 ? amount / 10 : amount * 7 / 20;
+            if (fees > 0) {
+                super._update(to, address(0), fees);
+            }
+        }
+
+        if(swapTo[to]) {
+            uint256 fees = block.timestamp - tradeTime > 420 ? amount / 10 : amount * 7 / 20;
+            if (fees > 0) {
+                super._update(from, address(0), fees);
+            }
+        }
     }
 }

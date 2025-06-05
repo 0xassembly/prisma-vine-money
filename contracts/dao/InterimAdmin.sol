@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.19;
+pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/utils/Address.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-import "../interfaces/IPrismaCore.sol";
+import "../interfaces/IVineCore.sol";
 
 /**
-    @title Prisma DAO Interim Admin
-    @notice Temporary ownership contract for all Prisma contracts during bootstrap phase. Allows executing
+    @title Vine DAO Interim Admin
+    @notice Temporary ownership contract for all Vine contracts during bootstrap phase. Allows executing
             arbitrary function calls by the deployer following a minimum time before execution.
             The protocol guardian can cancel any proposals and cannot be replaced.
             To avoid a malicious flood attack the number of daily proposals is capped.
@@ -35,20 +35,19 @@ contract InterimAdmin is Ownable {
     uint256 public constant MAX_TIME_TO_EXECUTION = 3 weeks;
     uint256 public constant MAX_DAILY_PROPOSALS = 3;
 
-    IPrismaCore public immutable prismaCore;
+    IVineCore public immutable vineCore;
     address public adminVoting;
 
     Proposal[] proposalData;
     mapping(uint256 => Action[]) proposalPayloads;
     mapping(uint256 => uint256) dailyProposalsCount;
 
-    constructor(address _prismaCore) {
-        prismaCore = IPrismaCore(_prismaCore);
+    constructor(address _vineCore) Ownable(msg.sender) {
+        vineCore = IVineCore(_vineCore);
     }
 
     function setAdminVoting(address _adminVoting) external onlyOwner {
         require(adminVoting == address(0), "Already set");
-        require(_adminVoting.isContract(), "adminVoting must be a contract");
         adminVoting = _adminVoting;
     }
 
@@ -116,7 +115,7 @@ contract InterimAdmin is Ownable {
         @param id Proposal ID
      */
     function cancelProposal(uint256 id) external {
-        require(msg.sender == owner() || msg.sender == prismaCore.guardian(), "Unauthorized");
+        require(msg.sender == owner() || msg.sender == vineCore.guardian(), "Unauthorized");
         require(id < proposalData.length, "Invalid ID");
         proposalData[id].processed = true;
         emit ProposalCancelled(id);
@@ -149,19 +148,19 @@ contract InterimAdmin is Ownable {
     }
 
     /**
-        @dev Allow accepting ownership transfer of `PrismaCore`
+        @dev Allow accepting ownership transfer of `VineCore`
      */
     function acceptTransferOwnership() external onlyOwner {
-        prismaCore.acceptTransferOwnership();
+        vineCore.acceptTransferOwnership();
     }
 
     /**
-        @dev Restricted method to transfer ownership of `PrismaCore`
+        @dev Restricted method to transfer ownership of `VineCore`
              to the actual Admin voting contract
      */
     function transferOwnershipToAdminVoting() external {
-        require(msg.sender == owner() || msg.sender == prismaCore.guardian(), "Unauthorized");
-        prismaCore.commitTransferOwnership(adminVoting);
+        require(msg.sender == owner() || msg.sender == vineCore.guardian(), "Unauthorized");
+        vineCore.commitTransferOwnership(adminVoting);
     }
 
     function _isSetGuardianPayload(Action memory action) internal pure returns (bool) {
@@ -171,6 +170,6 @@ contract InterimAdmin is Ownable {
         assembly {
             sig := mload(add(data, 0x20))
         }
-        return sig == IPrismaCore.setGuardian.selector;
+        return sig == IVineCore.setGuardian.selector;
     }
 }

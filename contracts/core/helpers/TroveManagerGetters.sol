@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.19;
+pragma solidity ^0.8.19;
 
 import "../../interfaces/ITroveManager.sol";
 import "../../interfaces/IFactory.sol";
+import "../../dependencies/VineSignature.sol";
 
-/*  Helper contract for grabbing Trove data for the front end. Not part of the core Prisma system. */
-contract TroveManagerGetters {
+
+/*  Helper contract for grabbing Trove data for the front end. Not part of the core Vine system. */
+contract TroveManagerGetters is VineSignature {
     struct Collateral {
         address collateral;
         address[] troveManagers;
@@ -78,5 +80,46 @@ contract TroveManagerGetters {
             mstore(troveManagers, tmCount)
         }
         return troveManagers;
+    }
+
+    function getTrove(SignIn calldata auth, address _troveManager) external authenticated(auth) view returns (
+            uint256 debt,
+            uint256 coll,
+            uint256 stake,
+            uint8 status,
+            uint128 arrayIndex,
+            uint256 activeInterestIndex
+        ) {
+        return ITroveManager(_troveManager).getTrove(auth.user);
+    }
+
+    function getTroveStatus(SignIn calldata auth, address _troveManager) external authenticated(auth) view returns (uint256) {
+        return ITroveManager(_troveManager).getTroveStatus(auth.user);
+    }
+
+    function getTroveStake(SignIn calldata auth, address _troveManager) external authenticated(auth) view returns (uint256) {
+        return ITroveManager(_troveManager).getTroveStake(auth.user);
+    }
+
+    /**
+        @notice Get the current total collateral and debt amounts for a trove
+        @dev Also includes pending rewards from redistribution
+     */
+    function getTroveCollAndDebt(SignIn calldata auth, address _troveManager) public authenticated(auth) view returns (uint256 coll, uint256 debt) {
+        return ITroveManager(_troveManager).getTroveCollAndDebt(auth.user);
+    }
+
+    function getEntireDebtAndColl(
+        SignIn calldata auth, address _troveManager
+    ) public authenticated(auth) view returns (uint256 debt, uint256 coll, uint256 pendingDebtReward, uint256 pendingCollateralReward) {
+        return ITroveManager(_troveManager).getEntireDebtAndColl(auth.user);
+    }
+
+    function getNominalICR(SignIn calldata auth, address _troveManager) public authenticated(auth) view returns (uint256) {
+        return ITroveManager(_troveManager).getNominalICR(auth.user);
+    }
+
+    function getPendingCollAndDebtRewards(SignIn calldata auth, address _troveManager) public authenticated(auth) view returns (uint256, uint256) {
+        return ITroveManager(_troveManager).getPendingCollAndDebtRewards(auth.user);
     }
 }

@@ -1,29 +1,18 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.19;
+pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
-import "../../interfaces/ICurveProxy.sol";
-import "../../interfaces/IVault.sol";
-import "../../interfaces/ILiquidityGauge.sol";
-import "../../interfaces/IGaugeController.sol";
-import "../../dependencies/PrismaOwnable.sol";
+import "../interfaces/IVault.sol";
+import "../dependencies/VineOwnable.sol";
 
 /**
-    @title Prisma Curve Deposit Wrapper
-    @notice Standard ERC20 interface around a deposit of a Curve LP token into it's
-            associated gauge. Tokens are minted by depositing Curve LP tokens, and
-            burned to receive the LP tokens back. Holders may claim PRISMA emissions
-            on top of the earned CRV.
+    @title Vine Deposit Wrapper
  */
-contract CurveDepositToken is PrismaOwnable {
-    IERC20 public immutable PRISMA;
-    IERC20 public immutable CRV;
-    ICurveProxy public immutable curveProxy;
-    IPrismaVault public immutable vault;
-    IGaugeController public immutable gaugeController;
+contract DepositToken is VineOwnable {
+    IERC20 public immutable VINE;
+    IVineVault public immutable vault;
 
-    ILiquidityGauge public gauge;
     IERC20 public lpToken;
 
     uint256 public emissionId;
@@ -36,9 +25,9 @@ contract CurveDepositToken is PrismaOwnable {
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
 
-    // each array relates to [PRISMA, CRV]
-    uint256[2] public rewardIntegral;
-    uint128[2] public rewardRate;
+    // each array relates to VINE
+    uint256 public rewardIntegral;
+    uint128 public rewardRate;
     uint32 public lastUpdate;
     uint32 public periodFinish;
 
@@ -48,8 +37,8 @@ contract CurveDepositToken is PrismaOwnable {
     uint16 public maxWeeklyEmissionPct;
     uint128 public storedExcessEmissions;
 
-    mapping(address => uint256[2]) public rewardIntegralFor;
-    mapping(address => uint128[2]) private storedPendingReward;
+    mapping(address => uint256) public rewardIntegralFor;
+    mapping(address => uint128) private storedPendingReward;
 
     uint256 constant REWARD_DURATION = 1 weeks;
 
@@ -57,37 +46,23 @@ contract CurveDepositToken is PrismaOwnable {
     event Approval(address indexed owner, address indexed spender, uint256 value);
     event LPTokenDeposited(address indexed lpToken, address indexed receiver, uint256 amount);
     event LPTokenWithdrawn(address indexed lpToken, address indexed receiver, uint256 amount);
-    event RewardClaimed(address indexed receiver, uint256 prismaAmount, uint256 crvAmount);
+    event RewardClaimed(address indexed receiver, uint256 vineAmount);
     event MaxWeeklyEmissionPctSet(uint256 pct);
     event MaxWeeklyEmissionsExceeded(uint256 allocated, uint256 maxAllowed);
 
     constructor(
-        IERC20 _prisma,
-        IERC20 _CRV,
-        ICurveProxy _curveProxy,
-        IPrismaVault _vault,
-        IGaugeController _gaugeController,
-        address prismaCore
-    ) PrismaOwnable(prismaCore) {
-        PRISMA = _prisma;
-        CRV = _CRV;
-        curveProxy = _curveProxy;
+        IERC20 _vine,
+        IERC20 _lpToken,
+        IVineVault _vault,
+        address vineCore
+    ) VineOwnable(vineCore) {
+        VINE = _vine;
+        lpToken = _lpToken;
         vault = _vault;
-        gaugeController = _gaugeController;
-    }
-
-    function initialize(ILiquidityGauge _gauge) external {
-        require(address(gauge) == address(0), "Already intialized");
-        gauge = _gauge;
-
-        address _token = _gauge.lp_token();
-        lpToken = IERC20(_token);
-        IERC20(_token).approve(address(gauge), type(uint256).max);
-        PRISMA.approve(address(vault), type(uint256).max);
-
-        string memory _symbol = IERC20Metadata(_token).symbol();
-        name = string.concat("Prisma ", _symbol, " Curve Deposit");
-        symbol = string.concat("prisma-", _symbol);
+        VINE.approve(address(vault), type(uint256).max);
+        string memory _symbol = IERC20Metadata(address(_lpToken)).symbol();
+        name = string.concat("Vine ", _symbol, " Deposit");
+        symbol = string.concat("vine-", _symbol);
 
         periodFinish = uint32(block.timestamp - 1);
         maxWeeklyEmissionPct = 10000;
@@ -114,7 +89,6 @@ contract CurveDepositToken is PrismaOwnable {
     function deposit(address receiver, uint256 amount) external returns (bool) {
         require(amount > 0, "Cannot deposit zero");
         lpToken.transferFrom(msg.sender, address(this), amount);
-        gauge.deposit(amount, address(curveProxy));
         uint256 balance = balanceOf[receiver];
         uint256 supply = totalSupply;
         balanceOf[receiver] = balance + amount;
@@ -125,7 +99,6 @@ contract CurveDepositToken is PrismaOwnable {
 
         emit Transfer(address(0), receiver, amount);
         emit LPTokenDeposited(address(lpToken), receiver, amount);
-
         return true;
     }
 
@@ -135,7 +108,7 @@ contract CurveDepositToken is PrismaOwnable {
         uint256 supply = totalSupply;
         balanceOf[msg.sender] = balance - amount;
         totalSupply = supply - amount;
-        curveProxy.withdrawFromGauge(address(gauge), address(lpToken), amount, receiver);
+        lpToken.transfer(receiver, amount);
 
         _updateIntegrals(msg.sender, balance, supply);
         if (block.timestamp / 1 weeks >= periodFinish / 1 weeks) _fetchRewards();
@@ -146,48 +119,45 @@ contract CurveDepositToken is PrismaOwnable {
         return true;
     }
 
-    function _claimReward(address claimant, address receiver) internal returns (uint128[2] memory amounts) {
+    function _claimReward(address claimant, address) internal returns (uint128 amounts) {
         _updateIntegrals(claimant, balanceOf[claimant], totalSupply);
         amounts = storedPendingReward[claimant];
         delete storedPendingReward[claimant];
 
-        CRV.transfer(receiver, amounts[1]);
         return amounts;
     }
 
-    function claimReward(address receiver) external returns (uint256 prismaAmount, uint256 crvAmount) {
-        uint128[2] memory amounts = _claimReward(msg.sender, receiver);
-        vault.transferAllocatedTokens(msg.sender, receiver, amounts[0]);
+    function claimReward(address receiver) external returns (uint256 vineAmount) {
+        uint128 amounts = _claimReward(msg.sender, receiver);
+        vault.transferAllocatedTokens(msg.sender, receiver, amounts);
 
-        emit RewardClaimed(receiver, amounts[0], amounts[1]);
-        return (amounts[0], amounts[1]);
+        emit RewardClaimed(receiver, amounts);
+        return amounts;
     }
 
     function vaultClaimReward(address claimant, address receiver) external returns (uint256) {
         require(msg.sender == address(vault));
-        uint128[2] memory amounts = _claimReward(claimant, receiver);
+        uint128 amounts = _claimReward(claimant, receiver);
 
-        emit RewardClaimed(receiver, 0, amounts[1]);
-        return amounts[0];
+        emit RewardClaimed(receiver, 0);
+        return amounts;
     }
 
-    function claimableReward(address account) external view returns (uint256 prismaAmount, uint256 crvAmount) {
+    function claimableReward(address account) external view returns (uint256 vineAmount) {
         uint256 updated = periodFinish;
         if (updated > block.timestamp) updated = block.timestamp;
         uint256 duration = updated - lastUpdate;
         uint256 balance = balanceOf[account];
         uint256 supply = totalSupply;
-        uint256[2] memory amounts;
+        uint256 amounts;
 
-        for (uint256 i = 0; i < 2; i++) {
-            uint256 integral = rewardIntegral[i];
+        uint256 integral = rewardIntegral;
             if (supply > 0) {
-                integral += (duration * rewardRate[i] * 1e18) / supply;
+                integral += (duration * rewardRate * 1e18) / supply;
             }
-            uint256 integralFor = rewardIntegralFor[account][i];
-            amounts[i] = storedPendingReward[account][i] + ((balance * (integral - integralFor)) / 1e18);
-        }
-        return (amounts[0], amounts[1]);
+            uint256 integralFor = rewardIntegralFor[account];
+            amounts = storedPendingReward[account] + ((balance * (integral - integralFor)) / 1e18);
+        return amounts;
     }
 
     function approve(address _spender, uint256 _value) public returns (bool) {
@@ -230,20 +200,18 @@ contract CurveDepositToken is PrismaOwnable {
         uint256 duration = updated - lastUpdate;
         if (duration > 0) lastUpdate = uint32(updated);
 
-        for (uint256 i = 0; i < 2; i++) {
-            uint256 integral = rewardIntegral[i];
+        uint256 integral = rewardIntegral;
             if (duration > 0 && supply > 0) {
-                integral += (duration * rewardRate[i] * 1e18) / supply;
-                rewardIntegral[i] = integral;
+                integral += (duration * rewardRate * 1e18) / supply;
+                rewardIntegral = integral;
             }
             if (account != address(0)) {
-                uint256 integralFor = rewardIntegralFor[account][i];
+                uint256 integralFor = rewardIntegralFor[account];
                 if (integral > integralFor) {
-                    storedPendingReward[account][i] += uint128((balance * (integral - integralFor)) / 1e18);
-                    rewardIntegralFor[account][i] = integral;
+                    storedPendingReward[account] += uint128((balance * (integral - integralFor)) / 1e18);
+                    rewardIntegralFor[account] = integral;
                 }
             }
-        }
     }
 
     function pushExcessEmissions() external {
@@ -256,7 +224,7 @@ contract CurveDepositToken is PrismaOwnable {
             uint256 excess = storedExcessEmissions + newAmount;
             storedExcessEmissions = 0;
             vault.transferAllocatedTokens(address(this), address(this), excess);
-            vault.increaseUnallocatedSupply(PRISMA.balanceOf(address(this)));
+            vault.increaseUnallocatedSupply(VINE.balanceOf(address(this)));
         }
     }
 
@@ -267,35 +235,27 @@ contract CurveDepositToken is PrismaOwnable {
     }
 
     function _fetchRewards() internal {
-        uint256 prismaAmount;
+        uint256 vineAmount;
         uint256 id = emissionId;
-        if (id > 0) prismaAmount = vault.allocateNewEmissions(id);
+        if (id > 0) vineAmount = vault.allocateNewEmissions(id);
 
         // apply max weekly emission limit
         uint256 maxWeekly = maxWeeklyEmissionPct;
         if (maxWeekly < 10000) {
             maxWeekly = (vault.weeklyEmissions(vault.getWeek()) * maxWeekly) / 10000;
-            if (prismaAmount > maxWeekly) {
-                emit MaxWeeklyEmissionsExceeded(prismaAmount, maxWeekly);
-                _pushExcessEmissions(prismaAmount - maxWeekly);
-                prismaAmount = maxWeekly;
+            if (vineAmount > maxWeekly) {
+                emit MaxWeeklyEmissionsExceeded(vineAmount, maxWeekly);
+                _pushExcessEmissions(vineAmount - maxWeekly);
+                vineAmount = maxWeekly;
             }
-        }
-
-        // only claim with non-zero weight to allow active receiver before Curve gauge is voted in
-        uint256 crvAmount;
-        if (gaugeController.get_gauge_weight(address(gauge)) > 0) {
-            crvAmount = curveProxy.mintCRV(address(gauge), address(this));
         }
 
         uint256 _periodFinish = periodFinish;
         if (block.timestamp < _periodFinish) {
             uint256 remaining = _periodFinish - block.timestamp;
-            prismaAmount += remaining * rewardRate[0];
-            crvAmount += remaining * rewardRate[1];
+            vineAmount += remaining * rewardRate;
         }
-        rewardRate[0] = uint128(prismaAmount / REWARD_DURATION);
-        rewardRate[1] = uint128(crvAmount / REWARD_DURATION);
+        rewardRate = uint128(vineAmount / REWARD_DURATION);
 
         lastUpdate = uint32(block.timestamp);
         periodFinish = uint32(block.timestamp + REWARD_DURATION);

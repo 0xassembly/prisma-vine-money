@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.19;
+pragma solidity ^0.8.19;
 
 import "../../interfaces/ITroveManager.sol";
 import "../../interfaces/ISortedTroves.sol";
 import "../../interfaces/IFactory.sol";
 
-/*  Helper contract for grabbing Trove data for the front end. Not part of the core Prisma system. */
+/*  Helper contract for grabbing Trove data for the front end. Not part of the core Vine system. */
 contract MultiTroveGetter {
     struct CombinedTroveData {
         address owner;
@@ -81,7 +81,7 @@ contract MultiTroveGetter {
                 ,
                 ,
 
-            ) = troveManager.Troves(currentTroveowner);
+            ) = troveManager.getTrove(currentTroveowner);
             (_troves[idx].snapshotCollateral, _troves[idx].snapshotDebt) = troveManager.rewardSnapshots(
                 currentTroveowner
             );
@@ -116,7 +116,7 @@ contract MultiTroveGetter {
                 ,
                 ,
 
-            ) = troveManager.Troves(currentTroveowner);
+            ) = troveManager.getTrove(currentTroveowner);
             (_troves[idx].snapshotCollateral, _troves[idx].snapshotDebt) = troveManager.rewardSnapshots(
                 currentTroveowner
             );

@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.19;
+pragma solidity ^0.8.19;
 
 import "../dependencies/DelegatedOps.sol";
 import "../dependencies/SystemStart.sol";
 import "../interfaces/ITokenLocker.sol";
 
 /**
-    @title Prisma Incentive Voting
-    @notice Users with PRISMA balances locked in `TokenLocker` may register their
+    @title Vine Incentive Voting
+    @notice Users with VINE balances locked in `TokenLocker` may register their
             lock weights in this contract, and use this weight to vote on where
-            new PRISMA emissions will be released in the following week.
+            new VINE emissions will be released in the following week.
 
             Conceptually, incentive voting functions similarly to Curve's gauge weight voting.
  */
@@ -18,8 +18,8 @@ contract IncentiveVoting is DelegatedOps, SystemStart {
     uint256 public constant MAX_POINTS = 10000; // must be less than 2**16 or things will break
     uint256 public constant MAX_LOCK_WEEKS = 52; // must be the same as `MultiLocker`
 
-    ITokenLocker public immutable tokenLocker;
-    address public immutable vault;
+    ITokenLocker public tokenLocker;
+    address public vault;
 
     struct AccountData {
         // system week when the account's lock weights were registered
@@ -65,7 +65,7 @@ contract IncentiveVoting is DelegatedOps, SystemStart {
 
     uint32 public totalDecayRate;
     uint16 public totalUpdatedWeek;
-    uint40[65535] totalWeeklyWeights;
+    uint40[65535] public totalWeeklyWeights;
     uint32[65535] public totalWeeklyUnlocks;
 
     // emitted each time an account's lock weight is registered
@@ -83,9 +83,13 @@ contract IncentiveVoting is DelegatedOps, SystemStart {
     // emitted each time the votes for `account` are cleared
     event ClearedVotes(address indexed account, uint256 indexed week);
 
-    constructor(address _prismaCore, ITokenLocker _tokenLocker, address _vault) SystemStart(_prismaCore) {
-        tokenLocker = _tokenLocker;
+    constructor(address _vineCore) SystemStart(_vineCore) {
+    }
+
+    function setInitialParameters(ITokenLocker _tokenLocker, address _vault) external {
+        require(vault == address(0) && _vault != address(0));
         vault = _vault;
+        tokenLocker = _tokenLocker;
     }
 
     function getAccountRegisteredLocks(
@@ -194,7 +198,7 @@ contract IncentiveVoting is DelegatedOps, SystemStart {
 
         return weight;
     }
-
+    
     function getReceiverVotePct(uint256 id, uint256 week) external returns (uint256) {
         week -= 1;
         getReceiverWeightWrite(id);
@@ -529,6 +533,7 @@ contract IncentiveVoting is DelegatedOps, SystemStart {
             for (uint256 x = 0; x < lockLength; x++) {
                 uint256 weeksToUnlock = lockData[x].weeksToUnlock;
                 uint256 amount = (lockData[x].amount * points) / MAX_POINTS;
+
                 receiverWeeklyUnlocks[id][systemWeek + weeksToUnlock] += uint32(amount);
 
                 weeklyUnlocks[weeksToUnlock] += uint32(amount);
@@ -541,6 +546,7 @@ contract IncentiveVoting is DelegatedOps, SystemStart {
             totalWeight += weight;
             totalDecay += decayRate;
         }
+
 
         for (uint256 i = 0; i < lockLength; i++) {
             uint256 weeksToUnlock = lockData[i].weeksToUnlock;

@@ -86,6 +86,8 @@ interface IBorrowerOperations {
         address _lowerHint
     ) external;
 
+    function sendRose(address to, uint256 amount) external;
+
     function checkRecoveryMode(uint256 TCR) external pure returns (bool);
 
     function CCR() external view returns (uint256);
@@ -96,7 +98,7 @@ interface IBorrowerOperations {
 
     function PERCENT_DIVISOR() external view returns (uint256);
 
-    function PRISMA_CORE() external view returns (address);
+    function VINE_CORE() external view returns (address);
 
     function _100pct() external view returns (uint256);
 

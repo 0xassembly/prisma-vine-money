@@ -35,7 +35,7 @@ interface IStabilityPool {
 
     function P() external view returns (uint256);
 
-    function PRISMA_CORE() external view returns (address);
+    function VINE_CORE() external view returns (address);
 
     function SCALE_FACTOR() external view returns (uint256);
 
@@ -83,7 +83,7 @@ interface IStabilityPool {
 
     function lastDebtLossError_Offset() external view returns (uint256);
 
-    function lastPrismaError() external view returns (uint256);
+    function lastVineError() external view returns (uint256);
 
     function lastUpdate() external view returns (uint32);
 

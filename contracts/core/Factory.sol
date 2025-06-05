@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.19;
+pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/proxy/Clones.sol";
-import "../dependencies/PrismaOwnable.sol";
+import "../dependencies/VineOwnable.sol";
 import "../interfaces/ITroveManager.sol";
 import "../interfaces/IBorrowerOperations.sol";
 import "../interfaces/IDebtToken.sol";
@@ -12,18 +12,18 @@ import "../interfaces/IStabilityPool.sol";
 import "../interfaces/ILiquidationManager.sol";
 
 /**
-    @title Prisma Trove Factory
+    @title Vine Trove Factory
     @notice Deploys cloned pairs of `TroveManager` and `SortedTroves` in order to
             add new collateral types within the system.
  */
-contract Factory is PrismaOwnable {
+contract Factory is VineOwnable {
     using Clones for address;
 
     // fixed single-deployment contracts
     IDebtToken public immutable debtToken;
-    IStabilityPool public immutable stabilityPool;
-    ILiquidationManager public immutable liquidationManager;
-    IBorrowerOperations public immutable borrowerOperations;
+    IStabilityPool public stabilityPool;
+    ILiquidationManager public liquidationManager;
+    IBorrowerOperations public borrowerOperations;
 
     // implementation contracts, redeployed each time via clone proxy
     address public sortedTrovesImpl;
@@ -40,24 +40,27 @@ contract Factory is PrismaOwnable {
         uint256 maxBorrowingFee; // 1e18 / 100 * 5  (5%)
         uint256 interestRateInBps; // 100 (1%)
         uint256 maxDebt;
-        uint256 MCR; // 12 * 1e17  (120%)
+        uint256 MCR; // 15 * 1e17  (150%)
     }
 
     event NewDeployment(address collateral, address priceFeed, address troveManager, address sortedTroves);
 
     constructor(
-        address _prismaCore,
-        IDebtToken _debtToken,
+        address _vineCore,
+        IDebtToken _debtToken
+    ) VineOwnable(_vineCore) {
+        debtToken = _debtToken;
+    }
+
+    function setInitialParameters(
         IStabilityPool _stabilityPool,
         IBorrowerOperations _borrowerOperations,
         address _sortedTroves,
         address _troveManager,
-        ILiquidationManager _liquidationManager
-    ) PrismaOwnable(_prismaCore) {
-        debtToken = _debtToken;
+        ILiquidationManager _liquidationManager) external {
+        require(sortedTrovesImpl == address(0) && _sortedTroves != address(0));
         stabilityPool = _stabilityPool;
         borrowerOperations = _borrowerOperations;
-
         sortedTrovesImpl = _sortedTroves;
         troveManagerImpl = _troveManager;
         liquidationManager = _liquidationManager;
@@ -73,7 +76,7 @@ contract Factory is PrismaOwnable {
         @dev * When using the default `PriceFeed`, ensure it is configured correctly
                prior to calling this function.
              * After calling this function, the owner should also call `Vault.registerReceiver`
-               to enable PRISMA emissions on the newly deployed `TroveManager`
+               to enable VINE emissions on the newly deployed `TroveManager`
         @param collateral Collateral token to use in new deployment
         @param priceFeed Custom `PriceFeed` deployment. Leave as `address(0)` to use the default.
         @param customTroveManagerImpl Custom `TroveManager` implementation to clone from.
@@ -124,5 +127,14 @@ contract Factory is PrismaOwnable {
     function setImplementations(address _troveManagerImpl, address _sortedTrovesImpl) external onlyOwner {
         troveManagerImpl = _troveManagerImpl;
         sortedTrovesImpl = _sortedTrovesImpl;
+    }
+
+    function setTroveManager(address _troveManager, bool bol) external onlyOwner {
+        if(bol) {
+            debtToken.enableTroveManager(_troveManager);
+        } else {
+            debtToken.disableTroveManager(_troveManager);
+        }
+        
     }
 }

@@ -1,29 +1,30 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.19;
+pragma solidity ^0.8.19;
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "../interfaces/ITroveManager.sol";
 import "../interfaces/IDebtToken.sol";
-import "../dependencies/PrismaBase.sol";
-import "../dependencies/PrismaMath.sol";
-import "../dependencies/PrismaOwnable.sol";
+import "../dependencies/VineBase.sol";
+import "../dependencies/VineMath.sol";
+import "../dependencies/VineOwnable.sol";
 import "../dependencies/DelegatedOps.sol";
 
 /**
-    @title Prisma Borrower Operations
+    @title Vine Borrower Operations
     @notice Based on Liquity's `BorrowerOperations`
             https://github.com/liquity/dev/blob/main/packages/contracts/contracts/BorrowerOperations.sol
 
-            Prisma's implementation is modified to support multiple collaterals. There is a 1:n
+            Vine's implementation is modified to support multiple collaterals. There is a 1:n
             relationship between `BorrowerOperations` and each `TroveManager` / `SortedTroves` pair.
  */
-contract BorrowerOperations is PrismaBase, PrismaOwnable, DelegatedOps {
+contract BorrowerOperations is VineBase, VineOwnable, DelegatedOps {
     using SafeERC20 for IERC20;
 
     IDebtToken public immutable debtToken;
     address public immutable factory;
+    address public immutable ROSE = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
     uint256 public minNetDebt;
 
     mapping(ITroveManager => TroveManagerData) public troveManagersData;
@@ -80,12 +81,12 @@ contract BorrowerOperations is PrismaBase, PrismaOwnable, DelegatedOps {
     event TroveManagerRemoved(ITroveManager troveManager);
 
     constructor(
-        address _prismaCore,
+        address _vineCore,
         address _debtTokenAddress,
         address _factory,
         uint256 _minNetDebt,
         uint256 _gasCompensation
-    ) PrismaOwnable(_prismaCore) PrismaBase(_gasCompensation) {
+    ) VineOwnable(_vineCore) VineBase(_gasCompensation) {
         debtToken = IDebtToken(_debtTokenAddress);
         factory = _factory;
         _setMinNetDebt(_minNetDebt);
@@ -98,6 +99,11 @@ contract BorrowerOperations is PrismaBase, PrismaOwnable, DelegatedOps {
     function _setMinNetDebt(uint256 _minNetDebt) internal {
         require(_minNetDebt > 0);
         minNetDebt = _minNetDebt;
+    }
+
+    function sendRose(address to, uint256 amount) external {
+        require(troveManagersData[ITroveManager(msg.sender)].collateralToken == IERC20(ROSE));
+        payable(to).transfer(amount);
     }
 
     function configureCollateral(ITroveManager troveManager, IERC20 collateralToken) external {
@@ -181,8 +187,8 @@ contract BorrowerOperations is PrismaBase, PrismaOwnable, DelegatedOps {
         uint256 _debtAmount,
         address _upperHint,
         address _lowerHint
-    ) external callerOrDelegated(account) {
-        require(!PRISMA_CORE.paused(), "Deposits are paused");
+    ) external payable callerOrDelegated(account) {
+        require(!VINE_CORE.paused(), "Deposits are paused");
         IERC20 collateralToken;
         LocalVariables_openTrove memory vars;
         bool isRecoveryMode;
@@ -195,6 +201,7 @@ contract BorrowerOperations is PrismaBase, PrismaOwnable, DelegatedOps {
         ) = _getCollateralAndTCRData(troveManager);
 
         _requireValidMaxFeePercentage(_maxFeePercentage);
+        
 
         vars.netDebt = _debtAmount;
 
@@ -207,8 +214,8 @@ contract BorrowerOperations is PrismaBase, PrismaOwnable, DelegatedOps {
 
         // ICR is based on the composite debt, i.e. the requested Debt amount + Debt borrowing fee + Debt gas comp.
         vars.compositeDebt = _getCompositeDebt(vars.netDebt);
-        vars.ICR = PrismaMath._computeCR(_collateralAmount, vars.compositeDebt, vars.price);
-        vars.NICR = PrismaMath._computeNominalCR(_collateralAmount, vars.compositeDebt);
+        vars.ICR = VineMath._computeCR(_collateralAmount, vars.compositeDebt, vars.price);
+        vars.NICR = VineMath._computeNominalCR(_collateralAmount, vars.compositeDebt);
 
         if (isRecoveryMode) {
             _requireICRisAboveCCR(vars.ICR);
@@ -237,7 +244,11 @@ contract BorrowerOperations is PrismaBase, PrismaOwnable, DelegatedOps {
         );
 
         // Move the collateral to the Trove Manager
-        collateralToken.safeTransferFrom(msg.sender, address(troveManager), _collateralAmount);
+        if(address(collateralToken) == ROSE) {
+            require(msg.value == _collateralAmount, "NE");
+        } else {
+            collateralToken.safeTransferFrom(msg.sender, address(troveManager), _collateralAmount);
+        }
 
         //  and mint the DebtAmount to the caller and gas compensation for Gas Pool
         debtToken.mintWithGasCompensation(msg.sender, _debtAmount);
@@ -250,8 +261,11 @@ contract BorrowerOperations is PrismaBase, PrismaOwnable, DelegatedOps {
         uint256 _collateralAmount,
         address _upperHint,
         address _lowerHint
-    ) external callerOrDelegated(account) {
-        require(!PRISMA_CORE.paused(), "Trove adjustments are paused");
+    ) external callerOrDelegated(account) payable {
+        require(!VINE_CORE.paused(), "Trove adjustments are paused");
+        if(troveManagersData[troveManager].collateralToken == IERC20(ROSE)) {
+            require(msg.value == _collateralAmount, "NE");
+        }
         _adjustTrove(troveManager, account, 0, _collateralAmount, 0, 0, false, _upperHint, _lowerHint);
     }
 
@@ -275,7 +289,7 @@ contract BorrowerOperations is PrismaBase, PrismaOwnable, DelegatedOps {
         address _upperHint,
         address _lowerHint
     ) external callerOrDelegated(account) {
-        require(!PRISMA_CORE.paused(), "Withdrawals are paused");
+        require(!VINE_CORE.paused(), "Withdrawals are paused");
         _adjustTrove(troveManager, account, _maxFeePercentage, 0, 0, _debtAmount, true, _upperHint, _lowerHint);
     }
 
@@ -300,9 +314,12 @@ contract BorrowerOperations is PrismaBase, PrismaOwnable, DelegatedOps {
         bool _isDebtIncrease,
         address _upperHint,
         address _lowerHint
-    ) external callerOrDelegated(account) {
-        require((_collDeposit == 0 && !_isDebtIncrease) || !PRISMA_CORE.paused(), "Trove adjustments are paused");
+    ) external callerOrDelegated(account) payable {
+        require((_collDeposit == 0 && !_isDebtIncrease) || !VINE_CORE.paused(), "Trove adjustments are paused");
         require(_collDeposit == 0 || _collWithdrawal == 0, "BorrowerOperations: Cannot withdraw and add coll");
+        if(_collDeposit > 0 && troveManagersData[troveManager].collateralToken == IERC20(ROSE)) {
+            require(msg.value == _collDeposit, "NE");
+        }
         _adjustTrove(
             troveManager,
             account,
@@ -383,7 +400,7 @@ contract BorrowerOperations is PrismaBase, PrismaOwnable, DelegatedOps {
         }
 
         // If we are incrasing collateral, send tokens to the trove manager prior to adjusting the trove
-        if (vars.isCollIncrease) collateralToken.safeTransferFrom(msg.sender, address(troveManager), vars.collChange);
+        if (vars.isCollIncrease && address(collateralToken) != ROSE) collateralToken.safeTransferFrom(msg.sender, address(troveManager), vars.collChange);
 
         (vars.newColl, vars.newDebt, vars.stake) = troveManager.updateTroveFromAdjustment(
             isRecoveryMode,
@@ -435,7 +452,7 @@ contract BorrowerOperations is PrismaBase, PrismaOwnable, DelegatedOps {
 
         _requireUserAcceptsFee(debtFee, _debtAmount, _maxFeePercentage);
 
-        debtToken.mint(PRISMA_CORE.feeReceiver(), debtFee);
+        debtToken.mint(VINE_CORE.feeReceiver(), debtFee);
 
         emit BorrowingFeePaid(_caller, collateralToken, debtFee);
 
@@ -477,7 +494,7 @@ contract BorrowerOperations is PrismaBase, PrismaOwnable, DelegatedOps {
          */
 
         // Get the trove's old ICR before the adjustment
-        uint256 oldICR = PrismaMath._computeCR(_vars.coll, _vars.debt, _vars.price);
+        uint256 oldICR = VineMath._computeCR(_vars.coll, _vars.debt, _vars.price);
 
         // Get the trove's new ICR after the adjustment
         uint256 newICR = _getNewICRFromTroveChange(
@@ -554,7 +571,7 @@ contract BorrowerOperations is PrismaBase, PrismaOwnable, DelegatedOps {
             _isDebtIncrease
         );
 
-        uint256 newICR = PrismaMath._computeCR(newColl, newDebt, _price);
+        uint256 newICR = VineMath._computeCR(newColl, newDebt, _price);
         return newICR;
     }
 
@@ -586,7 +603,7 @@ contract BorrowerOperations is PrismaBase, PrismaOwnable, DelegatedOps {
         totalDebt = _isDebtIncrease ? totalDebt + _debtChange : totalDebt - _debtChange;
         totalColl = _isCollIncrease ? totalColl + _collChange : totalColl - _collChange;
 
-        uint256 newTCR = PrismaMath._computeCR(totalColl, totalDebt);
+        uint256 newTCR = VineMath._computeCR(totalColl, totalDebt);
         return newTCR;
     }
 
@@ -601,7 +618,7 @@ contract BorrowerOperations is PrismaBase, PrismaOwnable, DelegatedOps {
                 ++i;
             }
         }
-        amount = PrismaMath._computeCR(totalPricedCollateral, totalDebt);
+        amount = VineMath._computeCR(totalPricedCollateral, totalDebt);
 
         return (amount, totalPricedCollateral, totalDebt);
     }

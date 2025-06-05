@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.19;
+pragma solidity ^0.8.19;
 
-import { OFT, IERC20, ERC20 } from "@layerzerolabs/solidity-examples/contracts/token/oft/OFT.sol";
 import { IERC3156FlashBorrower } from "@openzeppelin/contracts/interfaces/IERC3156FlashBorrower.sol";
-import "../interfaces/IPrismaCore.sol";
+import "../interfaces/IVineCore.sol";
+import "../dependencies/ERC20.sol";
 
 /**
-    @title Prisma Debt Token "acUSD"
+    @title Vine Debt Token "vUSD"
     @notice CDP minted against collateral deposits within `TroveManager`.
             This contract has a 1:n relationship with multiple deployments of `TroveManager`,
             each of which hold one collateral type which may be used to mint this token.
  */
-contract DebtToken is OFT {
+contract DebtToken is ERC20 {
     string public constant version = "1";
 
     // --- ERC 3156 Data ---
@@ -37,11 +37,11 @@ contract DebtToken is OFT {
     mapping(address => uint256) private _nonces;
 
     // --- Addresses ---
-    IPrismaCore private immutable _prismaCore;
-    address public immutable stabilityPoolAddress;
-    address public immutable borrowerOperationsAddress;
-    address public immutable factory;
-    address public immutable gasPool;
+    IVineCore private immutable _vineCore;
+    address public stabilityPoolAddress;
+    address public borrowerOperationsAddress;
+    address public factory;
+    address public gasPool;
 
     mapping(address => bool) public troveManager;
 
@@ -51,22 +51,11 @@ contract DebtToken is OFT {
     constructor(
         string memory _name,
         string memory _symbol,
-        address _stabilityPoolAddress,
-        address _borrowerOperationsAddress,
-        IPrismaCore prismaCore_,
-        address _layerZeroEndpoint,
-        address _factory,
-        address _gasPool,
+        IVineCore vineCore_,
         uint256 _gasCompensation
-    ) OFT(_name, _symbol, _layerZeroEndpoint) {
-        stabilityPoolAddress = _stabilityPoolAddress;
-        _prismaCore = prismaCore_;
-        borrowerOperationsAddress = _borrowerOperationsAddress;
-        factory = _factory;
-        gasPool = _gasPool;
-
+    ) ERC20(address(vineCore_), _name, _symbol) {
+        _vineCore = vineCore_;
         DEBT_GAS_COMPENSATION = _gasCompensation;
-
         bytes32 hashedName = keccak256(bytes(_name));
         bytes32 hashedVersion = keccak256(bytes(version));
 
@@ -76,12 +65,27 @@ contract DebtToken is OFT {
         _CACHED_DOMAIN_SEPARATOR = _buildDomainSeparator(_TYPE_HASH, hashedName, hashedVersion);
     }
 
+    function setInitialParameters(address _factory,
+        address _gasPool, address _stabilityPoolAddress,
+        address _borrowerOperationsAddress) external {
+        require(factory == address(0) && _factory != address(0));
+        stabilityPoolAddress = _stabilityPoolAddress;
+        borrowerOperationsAddress = _borrowerOperationsAddress;
+        factory = _factory;
+        gasPool = _gasPool;
+    }
+
     function enableTroveManager(address _troveManager) external {
         require(msg.sender == factory, "!Factory");
         troveManager[_troveManager] = true;
     }
 
-    // --- Functions for intra-Prisma calls ---
+    function disableTroveManager(address _troveManager) external {
+        require(msg.sender == factory, "!Factory");
+        troveManager[_troveManager] = false;
+    }
+
+    // --- Functions for intra-Vine calls ---
 
     function mintWithGasCompensation(address _account, uint256 _amount) external returns (bool) {
         require(msg.sender == borrowerOperationsAddress);
@@ -121,7 +125,7 @@ contract DebtToken is OFT {
 
     // --- External functions ---
 
-    function transfer(address recipient, uint256 amount) public override(IERC20, ERC20) returns (bool) {
+    function transfer(address recipient, uint256 amount) public override returns (bool) {
         _requireValidRecipient(recipient);
         return super.transfer(recipient, amount);
     }
@@ -130,7 +134,7 @@ contract DebtToken is OFT {
         address sender,
         address recipient,
         uint256 amount
-    ) public override(IERC20, ERC20) returns (bool) {
+    ) public override returns (bool) {
         _requireValidRecipient(recipient);
         return super.transferFrom(sender, recipient, amount);
     }
@@ -202,7 +206,7 @@ contract DebtToken is OFT {
         );
         _spendAllowance(address(receiver), address(this), amount + fee);
         _burn(address(receiver), amount);
-        _transfer(address(receiver), _prismaCore.feeReceiver(), fee);
+        _transfer(address(receiver), _vineCore.feeReceiver(), fee);
         return true;
     }
 
@@ -261,4 +265,5 @@ contract DebtToken is OFT {
             "Debt: Cannot transfer tokens directly to the StabilityPool, TroveManager or BorrowerOps"
         );
     }
+
 }
